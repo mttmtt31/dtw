@@ -14,4 +14,4 @@ def compute_distance(s:pd.Series, t:pd.Series, distance:str='euclidean')->float:
     if distance.lower() not in ['euclidean']:
         raise ValueError('Please specify a valid distance measure.')
     if distance.lower() == 'euclidean':
-        return np.sqrt((s["x"] - t["x"])**2 + (s["y"] - t["y"])**2)
+        return np.sqrt(((s["x"] - t["x"])*1.05)**2 + ((s["y"] - t["y"])*0.68)**2)
