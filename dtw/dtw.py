@@ -1,50 +1,57 @@
 from numpy import array, zeros, full, argmin, inf, ndim
 from scipy.spatial.distance import cdist
 from math import isinf
+from dtw.commons import compute_distance
+from tqdm import tqdm
 
 
-def dtw(x, y, dist, warp=1, w=inf, s=1.0):
+def dtw(x, y, distance:str="euclidean", warp=1, w=inf):
     """
     Computes Dynamic Time Warping (DTW) of two sequences.
 
     :param array x: N1*M array
     :param array y: N2*M array
-    :param func dist: distance used as cost measure
+    :param str dist: distance used as cost measure
     :param int warp: how many shifts are computed.
     :param int w: window size limiting the maximal distance between indices of matched entries |i,j|.
-    :param float s: weight applied on off-diagonal moves of the path. As s gets larger, the warping path is increasingly biased towards the diagonal
     Returns the minimum distance, the cost matrix, the accumulated cost matrix, and the wrap path.
     """
-    assert len(x)
-    assert len(y)
-    assert isinf(w) or (w >= abs(len(x) - len(y)))
-    assert s > 0
+    if not len(x) or not len(y):
+        raise ValueError("Both sequences should be both non-empty")
+    if w < 0:
+        raise ValueError("Window size should be positive")    
     r, c = len(x), len(y)
     if not isinf(w):
         D0 = full((r + 1, c + 1), inf)
         for i in range(1, r + 1):
-            D0[i, max(1, i - w):min(c + 1, i + w + 1)] = 0
+            # retrieve the index of the row in the tracking dataframe with the same time_seconds as the current event you are analysing
+            centre_point = y[y["time_seconds"] == x.loc[i - 1]['time_seconds']].index[0]
+            D0[i, max(1, centre_point - w + 1):min(c + 1, centre_point + w + 1)] = 0
         D0[0, 0] = 0
     else:
         D0 = zeros((r + 1, c + 1))
         D0[0, 1:] = inf
         D0[1:, 0] = inf
     D1 = D0[1:, 1:]  # view
-    for i in range(r):
+    # for every row
+    for i in tqdm(range(r), desc = 'Scanning events... this may take some time'):
+        centre_point = y[y["time_seconds"] == x.loc[i]['time_seconds']].index[0]
+        # for every column value different from inf
         for j in range(c):
-            if (isinf(w) or (max(0, i - w) <= j <= min(c, i + w))):
-                D1[i, j] = dist(x[i], y[j])
+            if (isinf(w) or (max(0, centre_point - w) <= j <= min(c, centre_point + w))):
+                D1[i, j] = compute_distance(x.loc[i], y.loc[j], distance = distance)
     C = D1.copy()
     jrange = range(c)
     for i in range(r):
+        centre_point = y[y["time_seconds"] == x.loc[i]['time_seconds']].index[0]
         if not isinf(w):
-            jrange = range(max(0, i - w), min(c, i + w + 1))
+            jrange = range(max(0, centre_point - w), min(c, centre_point + w + 1))
         for j in jrange:
             min_list = [D0[i, j]]
             for k in range(1, warp + 1):
                 i_k = min(i + k, r)
                 j_k = min(j + k, c)
-                min_list += [D0[i_k, j] * s, D0[i, j_k] * s]
+                min_list += [D0[i_k, j], D0[i, j_k]]
             D1[i, j] += min(min_list)
     if len(x) == 1:
         path = zeros(len(y)), range(len(y))
@@ -112,45 +119,3 @@ def _traceback(D):
         p.insert(0, i)
         q.insert(0, j)
     return array(p), array(q)
-
-
-if __name__ == '__main__':
-    w = inf
-    s = 1.0
-    if 1:  # 1-D numeric
-        from sklearn.metrics.pairwise import manhattan_distances
-        x = [0, 0, 1, 1, 2, 4, 2, 1, 2, 0]
-        y = [1, 1, 1, 2, 2, 2, 2, 3, 2, 0]
-        dist_fun = manhattan_distances
-        w = 1
-        # s = 1.2
-    elif 0:  # 2-D numeric
-        from sklearn.metrics.pairwise import euclidean_distances
-        x = [[0, 0], [0, 1], [1, 1], [1, 2], [2, 2], [4, 3], [2, 3], [1, 1], [2, 2], [0, 1]]
-        y = [[1, 0], [1, 1], [1, 1], [2, 1], [4, 3], [4, 3], [2, 3], [3, 1], [1, 2], [1, 0]]
-        dist_fun = euclidean_distances
-    else:  # 1-D list of strings
-        from nltk.metrics.distance import edit_distance
-        # x = ['we', 'shelled', 'clams', 'for', 'the', 'chowder']
-        # y = ['class', 'too']
-        x = ['i', 'soon', 'found', 'myself', 'muttering', 'to', 'the', 'walls']
-        y = ['see', 'drown', 'himself']
-        # x = 'we talked about the situation'.split()
-        # y = 'we talked about the situation'.split()
-        dist_fun = edit_distance
-    dist, cost, acc, path = dtw(x, y, dist_fun, w=w, s=s)
-
-    # Vizualize
-    from matplotlib import pyplot as plt
-    plt.imshow(cost.T, origin='lower', cmap=plt.cm.Reds, interpolation='nearest')
-    plt.plot(path[0], path[1], '-o')  # relation
-    plt.xticks(range(len(x)), x)
-    plt.yticks(range(len(y)), y)
-    plt.xlabel('x')
-    plt.ylabel('y')
-    plt.axis('tight')
-    if isinf(w):
-        plt.title('Minimum distance: {}, slope weight: {}'.format(dist, s))
-    else:
-        plt.title('Minimum distance: {}, window widht: {}, slope weight: {}'.format(dist, w, s))
-    plt.show()
