@@ -146,17 +146,22 @@ def _traceback(D):
     i, j = array(D.shape) - 2
     p, q = [i], [j]
     while (i > 0) or (j > 0):
-        tb = argmin((D[i, j], D[i, j + 1], D[i + 1, j]))
-        # matching
-        if tb == 0:
-            i -= 1
-            j -= 1
-        # deletion
-        elif tb == 1:
-            i -= 1
-        # insertion
-        else: 
-            j -= 1
-        p.insert(0, i)
-        q.insert(0, j)
+        centre, right, bottom = (D[i, j], D[i, j + 1], D[i + 1, j])
+        # if you find a triplets of inf, slide everything to the left until finding values different from infinity
+        if isinf(min(centre, right, bottom)):
+            j = j-1
+        else:
+            tb = argmin((centre, right, bottom))
+            # matching
+            if tb == 0:
+                i -= 1
+                j -= 1
+            # deletion
+            elif tb == 1:
+                i -= 1
+            # insertion
+            else: 
+                j -= 1
+            p.insert(0, i)
+            q.insert(0, j)
     return array(p), array(q)
