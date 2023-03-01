@@ -1,7 +1,7 @@
 from numpy import array, zeros, full, argmin, inf, ndim
 from scipy.spatial.distance import cdist
 from math import isinf
-from dtw.commons import compute_distance
+from utils.commons import compute_distance
 from tqdm import tqdm
 
 
