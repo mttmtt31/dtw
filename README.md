@@ -35,19 +35,3 @@ plt.show()
 ```
 Result of the accumulated cost matrix and the shortest path (in white) found:
 ![Acc cost matrix and shortest path](./acc.png)
-
-
-## Other examples are available as notebook
-
-* [the code above as a notebook](./examples/simple%20example.ipynb)
-* [a sound comparison based on DTW + MFCC](./examples/MFCC%20%2B%20DTW.ipynb)
-* [simple speech recognition](./examples/speech-recognition.ipynb)
-
-
-## Installation
-
-```
-python -m pip install dtw
-```
-
-It is tested on Python 2.7, 3.4, 3.5 and 3.6. It requires numpy and scipy.
