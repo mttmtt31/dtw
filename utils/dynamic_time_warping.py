@@ -6,22 +6,24 @@ from tqdm import tqdm
 import pandas as pd
 from typing import Union
 import logging
+import numpy as np
 
-def dtw(event_data:pd.DataFrame, track_data:pd.DataFrame, distance:str="euclidean", warp:int=1, w:Union[int,float]=inf):
+def dtw(event_data:pd.DataFrame, track_data:pd.DataFrame, distance:str="euclidean", warp:int=1, w:Union[int,float]=inf, increment:int=0):
     """Computes Dynamic Time Warping (DTW) of two sequences.
 
     Args:
         event_data, track_data (pd.DataFrame): Two pd.DataFrame containing values for `x` coordinate, `y` coordinate, and `time_seconds`
         distance (str, optional): distance to use. Defaults to "euclidean".
         warp (int, optional): how many shifts are computed. Defaults to 1.
-        w (Union[int,float], optional): window size, defined on every row. When inf, the whole row will be considered. Defaults to inf.
+        w (float, optional): window size (in seconds), defined on every row. This number indicates how many seconds to the left (and symmetrically, to the right) to consider.
+        increment (int, optional): first shifting of the event dataset, usually derived from a baseline. Defaults to 0.
 
     Raises:
         ValueError: when either pd.DataFrame is empty
-        ValueError: when the window size is smaller than 0 or it is a float and not inf.
+        ValueError: when the window size is negative.
 
     Returns:
-        minimum distance, the cost matrix, the accumulated cost matrix, and the wrap path
+       pd.DataFrame: synchronisation dataframe
     """
     if len(track_data) < len(event_data):
         logging.warn('Event sequence is longer than tracking sequence. Maybe you pass them in the wrong order?')
@@ -29,8 +31,7 @@ def dtw(event_data:pd.DataFrame, track_data:pd.DataFrame, distance:str="euclidea
         raise ValueError("Both sequences should be both non-empty")
     if w < 0:
         raise ValueError("Window size should be positive") 
-    elif isinstance(w, float) and w < inf:
-        raise ValueError(f"Window size can only be an integer or float. {w} is not a valid value.")   
+    w = int(w*10)
     event_data = event_data.reset_index()
     track_data = track_data.reset_index()
     # retrieve the lengths of the two series
@@ -47,9 +48,10 @@ def dtw(event_data:pd.DataFrame, track_data:pd.DataFrame, distance:str="euclidea
         for i in range(1, r + 1):
             # compute the window of values which will be set to 0.
             # the window is centred in the index of the row in the tracking dataframe with the same time_seconds as the current event you are analysing
-            centre_point = track_data[track_data["time_seconds"] == event_data.loc[i - 1]['time_seconds']].index[0]
+            # shifted by increment according to baseline and then add 1 because D0 has an extra column at the beginning
+            centre_point = track_data[track_data["time_seconds"] == event_data.loc[i - 1]['time_seconds']].index[0] + 1 + increment
             # set to zero all values inside this window
-            D0[i, max(1, centre_point - w + 1):min(c + 1, centre_point + w + 1)] = 0
+            D0[i, max(1, centre_point - w):min(c + 1, centre_point + w + 1)] = 0
         # set to zero the value in the top-left corner
         D0[0, 0] = 0
     else:
@@ -65,7 +67,7 @@ def dtw(event_data:pd.DataFrame, track_data:pd.DataFrame, distance:str="euclidea
     # for every row
     for i in tqdm(range(r), desc = 'Scanning events... this may take some time'):
         # retrieve the centre point. This will be used to find which values are inside the window previously initialised to zero.
-        centre_point = track_data[track_data["time_seconds"] == event_data.loc[i]['time_seconds']].index[0]
+        centre_point = track_data[track_data["time_seconds"] == event_data.loc[i]['time_seconds']].index[0] + increment
         # for every value different from inf on the current row
         for j in range(c):
             if (isinf(w) or ((max(0, centre_point - w) <= j <= min(c, centre_point + w)) and j not in missing_indices)):
@@ -73,24 +75,28 @@ def dtw(event_data:pd.DataFrame, track_data:pd.DataFrame, distance:str="euclidea
                 D1[i, j] = compute_distance(event_data.loc[i], track_data.loc[j], distance = distance)
     # the cost matrix is now ready, copy it.
     C = D1.copy()
-    # for each row
-    for i in range(r):
-        # retrieve the centre of the window on this row
-        centre_point = track_data[track_data["time_seconds"] == event_data.loc[i]['time_seconds']].index[0]
-        # find the values inside the window
-        if not isinf(w):
-            jrange = range(max(0, centre_point - w), min(c, centre_point + w + 1))
+    # for every row
+    i = 0
+    # initialise two variables which keep track of the last finite value
+    while i < r:
+        # check if the row has values different from infinity
+        if isinf(min(D1[i, :])):
+            # consider the next row
+            i = i + 1
         else:
-            jrange = range(c)
-        # for each value inside the window
-        for j in jrange:
-            if j not in missing_indices:
-                min_list = [D0[i, j]]
-                for k in range(1, warp + 1):
-                    i_k = min(i + k, r)
-                    j_k = min(j + k, c)
-                    min_list += [D0[i_k, j], D0[i, j_k]]
-                D1[i, j] += min(min_list)
+            # find all columns with values different from nans. These will be the values that will be updated in D1
+            for j in [idx for idx, val in enumerate(D1[i, :]) if val < inf]:
+                # the 3-value window needs to slide to the left until a finite value is found
+                i_prev = i
+                j_prev = j
+                # consider the previous row until you find one with at least one finite value
+                while isinf(min(D0[i_prev, :])):
+                    i_prev = i_prev-1
+                # consider the previous row until you find a triplet with at least one finite value
+                while isinf(min(D0[i_prev, j_prev], D0[i_prev, j_prev + 1], D0[i_prev + 1, j_prev])):
+                    j_prev = j_prev-1
+                D1[i, j] = D1[i, j] + min((D0[i_prev, j_prev], D0[i_prev, j_prev + 1], D0[i_prev + 1, j_prev]))
+            i = i + 1
     if len(event_data) == 1:
         path = zeros(len(track_data)), range(len(track_data))
     elif len(track_data) == 1:
@@ -100,31 +106,34 @@ def dtw(event_data:pd.DataFrame, track_data:pd.DataFrame, distance:str="euclidea
     return D1[-1, -1], C, D1, path
 
 
-def accelerated_dtw(x, y, dist, warp=1):
-    """
-    Computes Dynamic Time Warping (DTW) of two sequences in a faster way.
-    Instead of iterating through each element and calculating each distance,
-    this uses the cdist function from scipy (https://docs.scipy.org/doc/scipy/reference/generated/scipy.spatial.distance.cdist.html)
+def accelerated_dtw(event_data:pd.DataFrame, track_data:pd.DataFrame, distance:str="euclidean", warp:int=1, increment:int=0):
+    """Computes Dynamic Time Warping (DTW) of two sequences.
 
-    :param array x: N1*M array
-    :param array y: N2*M array
-    :param string or func dist: distance parameter for cdist. When string is given, cdist uses optimized functions for the distance metrics.
-    If a string is passed, the distance function can be 'braycurtis', 'canberra', 'chebyshev', 'cityblock', 'correlation', 'cosine', 'dice', 'euclidean', 'hamming', 'jaccard', 'kulsinski', 'mahalanobis', 'matching', 'minkowski', 'rogerstanimoto', 'russellrao', 'seuclidean', 'sokalmichener', 'sokalsneath', 'sqeuclidean', 'wminkowski', 'yule'.
-    :param int warp: how many shifts are computed.
-    Returns the minimum distance, the cost matrix, the accumulated cost matrix, and the wrap path.
+    Args:
+        event_data, track_data (pd.DataFrame): Two pd.DataFrame containing values for `x` coordinate, `y` coordinate, and `time_seconds`
+        distance (str, optional): distance to use. Defaults to "euclidean".
+        warp (int, optional): how many shifts are computed. Defaults to 1.
+        increment (int, optional): first shifting of the event dataset, usually derived from a baseline. Defaults to 0.
+        
+    Raises:
+        ValueError: when either pd.DataFrame is empty
+        ValueError: when the window size is negative.
+
+    Returns:
+        pd.DataFrame: synchronisation dataframe
     """
-    assert len(x)
-    assert len(y)
-    if ndim(x) == 1:
-        x = x.reshape(-1, 1)
-    if ndim(y) == 1:
-        y = y.reshape(-1, 1)
-    r, c = len(x), len(y)
+    if len(track_data) < len(event_data):
+        logging.warn('Event sequence is longer than tracking sequence. Maybe you pass them in the wrong order?')
+    if not len(event_data) or not len(track_data):
+        raise ValueError("Both sequences should be both non-empty")
+    event_data = event_data[["x", "y"]].values
+    track_data =     track_data[~track_data[["x", "y"]].isna().any(axis = 1)][["x", "y"]].values
+    r, c = len(event_data), len(track_data)
     D0 = zeros((r + 1, c + 1))
     D0[0, 1:] = inf
     D0[1:, 0] = inf
     D1 = D0[1:, 1:]
-    D0[1:, 1:] = cdist(x, y, dist)
+    D0[1:, 1:] = cdist(event_data, track_data, metric=distance)
     C = D1.copy()
     for i in range(r):
         for j in range(c):
@@ -133,35 +142,60 @@ def accelerated_dtw(x, y, dist, warp=1):
                 min_list += [D0[min(i + k, r), j],
                              D0[i, min(j + k, c)]]
             D1[i, j] += min(min_list)
-    if len(x) == 1:
-        path = zeros(len(y)), range(len(y))
-    elif len(y) == 1:
-        path = range(len(x)), zeros(len(x))
+    if len(event_data) == 1:
+        path = zeros(len(track_data)), range(len(track_data))
+    elif len(track_data) == 1:
+        path = range(len(event_data)), zeros(len(event_data))
     else:
         path = _traceback(D0)
     return D1[-1, -1], C, D1, path
 
 
 def _traceback(D):
-    i, j = array(D.shape) - 2
-    p, q = [i], [j]
-    while (i > 0) or (j > 0):
-        centre, right, bottom = (D[i, j], D[i, j + 1], D[i + 1, j])
-        # if you find a triplets of inf, slide everything to the left until finding values different from infinity
-        if isinf(min(centre, right, bottom)):
-            j = j-1
-        else:
-            tb = argmin((centre, right, bottom))
-            # matching
-            if tb == 0:
-                i -= 1
-                j -= 1
-            # deletion
-            elif tb == 1:
-                i -= 1
-            # insertion
-            else: 
-                j -= 1
-            p.insert(0, i)
-            q.insert(0, j)
+    # find the set of rows which have at least one finite value
+    valid_rows = np.where(np.isfinite(D).any(axis = 1))[0]
+    i = -2
+    i_row = valid_rows[i]
+    _, j = array(D.shape) - 2
+    p, q = [], []
+    with tqdm(total=i, desc = 'Applying DTW...') as pbar:  
+        while (i_row > 0) or (j > 0):                  
+            # check if the row contains non-inf value. Otherwise, skip it.
+            if isinf(min(D[i_row, :])):
+                # consider the previous (valid row)
+                i = i-1 
+                i_row = valid_rows[i]
+                pbar.update(1)
+            else:
+                # find the first finite previous value
+                if isinf(min(D[i_row - 1, :])):
+                    # consider the previous (valid row)
+                    i = i-1
+                    i_row = valid_rows[i]
+                else:                        
+                    centre, right, bottom = (D[i_row, j], D[i_row, j + 1], D[i_row + 1, j])
+                    # if you find a triplet of inf, slide everything to the left until finding values different from infinity
+                    if isinf(min(centre, right, bottom)):
+                        j = j-1                        
+                    else:
+                        tb = argmin((centre, right, bottom))
+                        # matching
+                        if tb == 0:
+                            # move diagonally
+                            i -= 1
+                            i_row = valid_rows[i]
+                            j -= 1
+                            pbar.update(1)
+                        # deletion
+                        elif tb == 1:
+                            # move up
+                            i -= 1
+                            i_row = valid_rows[i]
+                        # insertion
+                        else: 
+                            # move to the left
+                            j -= 1
+                            pbar.update(1)
+                        p.insert(0, i_row)
+                        q.insert(0, j)
     return array(p), array(q)
