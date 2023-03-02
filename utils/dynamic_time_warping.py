@@ -158,7 +158,7 @@ def _traceback(D):
     i_row = valid_rows[i]
     _, j = array(D.shape) - 2
     p, q = [], []
-    with tqdm(total=i, desc = 'Applying DTW...') as pbar:  
+    with tqdm(total=i_row, desc = 'Applying DTW...') as pbar:  
         while (i_row > 0) or (j > 0):                  
             # check if the row contains non-inf value. Otherwise, skip it.
             if isinf(min(D[i_row, :])):
