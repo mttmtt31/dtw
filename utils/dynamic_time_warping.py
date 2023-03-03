@@ -106,14 +106,13 @@ def dtw(event_data:pd.DataFrame, track_data:pd.DataFrame, distance:str="euclidea
     return D1[-1, -1], C, D1, path
 
 
-def accelerated_dtw(event_data:pd.DataFrame, track_data:pd.DataFrame, distance:str="euclidean", warp:int=1, increment:int=0):
+def accelerated_dtw(event_data:pd.DataFrame, track_data:pd.DataFrame, distance:str="euclidean", warp:int=1):
     """Computes Dynamic Time Warping (DTW) of two sequences.
 
     Args:
         event_data, track_data (pd.DataFrame): Two pd.DataFrame containing values for `x` coordinate, `y` coordinate, and `time_seconds`
         distance (str, optional): distance to use. Defaults to "euclidean".
         warp (int, optional): how many shifts are computed. Defaults to 1.
-        increment (int, optional): first shifting of the event dataset, usually derived from a baseline. Defaults to 0.
         
     Raises:
         ValueError: when either pd.DataFrame is empty
@@ -152,50 +151,48 @@ def accelerated_dtw(event_data:pd.DataFrame, track_data:pd.DataFrame, distance:s
 
 
 def _traceback(D):
-    # find the set of rows which have at least one finite value
-    valid_rows = np.where(np.isfinite(D).any(axis = 1))[0]
-    i = -2
-    i_row = valid_rows[i]
-    _, j = array(D.shape) - 2
+    i, j = array(D.shape) - 2
     p, q = [], []
-    with tqdm(total=i_row, desc = 'Applying DTW...') as pbar:  
-        while (i_row > 0) or (j > 0):                  
+    i_tqdm = i
+    with tqdm(total=i_tqdm, desc = 'Applying DTW...') as pbar:  
+        while (i > 0) or (j > 0):                  
             # check if the row contains non-inf value. Otherwise, skip it.
-            if isinf(min(D[i_row, :])):
+            if isinf(min(D[i, :])):
                 # consider the previous (valid row)
                 i = i-1 
-                i_row = valid_rows[i]
+                # i_row = valid_rows[i]
                 pbar.update(1)
             else:
-                # find the first finite previous value
-                if isinf(min(D[i_row - 1, :])):
-                    # consider the previous (valid row)
-                    i = i-1
-                    i_row = valid_rows[i]
-                else:                        
-                    centre, right, bottom = (D[i_row, j], D[i_row, j + 1], D[i_row + 1, j])
-                    # if you find a triplet of inf, slide everything to the left until finding values different from infinity
-                    if isinf(min(centre, right, bottom)):
-                        j = j-1                        
-                    else:
-                        tb = argmin((centre, right, bottom))
-                        # matching
-                        if tb == 0:
-                            # move diagonally
-                            i -= 1
-                            i_row = valid_rows[i]
-                            j -= 1
-                            pbar.update(1)
-                        # deletion
-                        elif tb == 1:
-                            # move up
-                            i -= 1
-                            i_row = valid_rows[i]
-                        # insertion
-                        else: 
-                            # move to the left
-                            j -= 1
-                            pbar.update(1)
-                        p.insert(0, i_row)
-                        q.insert(0, j)
+                # # find the first finite previous value
+                # if isinf(min(D[i_row - 1, :])):
+                #     # consider the previous (valid row)
+                #     i = i-1
+                #     i_row = valid_rows[i]
+                # else:                        
+                centre, right, bottom = (D[i, j], D[i, j + 1], D[i + 1, j])
+                # if you find a triplet of inf, slide everything to the left until finding values different from infinity
+                if isinf(min(centre, right, bottom)):
+                    j = j-1                        
+                else:
+                    tb = argmin((centre, right, bottom))
+                    # matching
+                    if tb == 0:
+                        # move diagonally
+                        i -= 1
+                        # i_row = valid_rows[i]
+                        j -= 1
+                        pbar.update(1)
+                    # deletion
+                    elif tb == 1:
+                        # move up
+                        i -= 1
+                        # i_row = valid_rows[i]
+                    # insertion
+                    else: 
+                        # move to the left
+                        j -= 1
+                        pbar.update(1)
+                    # p.insert(0, i_row)
+                    p.insert(0, i)
+                    q.insert(0, j)
     return array(p), array(q)
