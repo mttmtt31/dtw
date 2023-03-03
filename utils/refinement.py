@@ -7,7 +7,7 @@ from tqdm import tqdm
 from utils.commons import compute_distance
 
 
-def refinement(event_data:pd.DataFrame, track_data:pd.DataFrame, distance:str="euclidean", w:Union[int,float]=0.5, increment:int=0, hard_alignment:bool=False):
+def refinement(event_data:pd.DataFrame, track_data:pd.DataFrame, distance:str="euclidean", w:Union[int,float]=0.5, increment:int=0, hard_alignment:bool=False, distance_threshold:float=15):
     """For each event, find the tracking event which minimises the error inside a window. The centre of the window is determined as 
     that tracking index with the same time_seconds as the event plus an (optional) increment which possibly accounts for the systematic 
     shift between the two sequences.
@@ -18,6 +18,7 @@ def refinement(event_data:pd.DataFrame, track_data:pd.DataFrame, distance:str="e
         w (float, optional): window size (in seconds), defined on every row. This number indicates how many seconds to the left (and symmetrically, to the right) to consider. Defaults to 0.5.
         increment (int, optional): first shifting of the event dataset, usually derived from a baseline. Defaults to 0.
         hard_alignment(bool, optional): once you synchronised event i to track frame j, whether event i+1 can be matched to a track_frame k, with k<j.
+        distance_threshold(float, optional): threshold above which a synchronisation is considered wrong.
     Raises:
         ValueError: when either pd.DataFrame is empty
         ValueError: when the window size is negative.
@@ -71,12 +72,21 @@ def refinement(event_data:pd.DataFrame, track_data:pd.DataFrame, distance:str="e
                 D[i, j] = compute_distance(event_data.loc[i], track_data.loc[j], distance = distance)
         # you scanned all columns, now find the one which minimises the error    
         min_j, error = np.argmin(D[i, :]), np.min(D[i, :])
-        if not isinf(error):
+        # it might happen that (due to missing values) you pick a 'huge' value anyway. Say for example this is your window:
+        # NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN 20.87 20.93 21.10
+        # Clearly the event was probably going to be matched somewhere where there is a missing value, 
+        # but with this method you will match it to a tracking_event which is 21m distant.
+        # So we put a threshold on synchronisation
+        if error < distance_threshold:
             p.append(i)
             q.append(min_j)
             errors.append(error)
+        else:
+            p.append(i)
+            q.append(np.nan)
+            errors.append(np.nan)
 
     path = np.array(p), np.array(q)
 
-    return path, np.array(errors).mean()
+    return path, np.array(errors)
 
